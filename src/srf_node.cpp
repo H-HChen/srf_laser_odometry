@@ -41,13 +41,13 @@ CLaserOdometry2D::CLaserOdometry2D()
     //Read Parameters
     //----------------
     ros::NodeHandle pn("~");
-    pn.param<std::string>("laser_scan_topic",laser_scan_topic,"/laser_scan");
-    pn.param<bool>("publish_tf", publish_tf, true);
-    pn.param<std::string>("base_frame_id", base_frame_id, "/base_link");
-    pn.param<std::string>("odom_topic", odom_topic, "/odom");
-    pn.param<std::string>("odom_frame_id", odom_frame_id, "/odom");
+    pn.param<std::string>("laser_scan_topic",laser_scan_topic,"/scan");
+    pn.param<bool>("publish_tf", publish_tf, false);
+    pn.param<std::string>("base_frame_id", base_frame_id, "base_footprint");
+    pn.param<std::string>("odom_topic", odom_topic, "/odom_srf");
+    pn.param<std::string>("odom_frame_id", odom_frame_id, "odom");
     pn.param<std::string>("init_pose_from_topic", init_pose_from_topic, "");
-    pn.param<int>("laser_decimation",laser_decimation,1);
+    pn.param<int>("laser_decimation",laser_decimation, 1);
     pn.param<double>("laser_min_range",laser_min_range,-1.0);
     pn.param<double>("laser_max_range",laser_max_range,-1.0);
 
@@ -72,10 +72,10 @@ CLaserOdometry2D::CLaserOdometry2D()
         initial_robot_pose.pose.pose.position.x = 0;
         initial_robot_pose.pose.pose.position.y = 0;
         initial_robot_pose.pose.pose.position.z = 0;
-        initial_robot_pose.pose.pose.orientation.w = 0;
+        initial_robot_pose.pose.pose.orientation.w = 1;
         initial_robot_pose.pose.pose.orientation.x = 0;
         initial_robot_pose.pose.pose.orientation.y = 0;
-        initial_robot_pose.pose.pose.orientation.z = 1;
+        initial_robot_pose.pose.pose.orientation.z = 0;
     }
 
     //Init variables
@@ -199,7 +199,7 @@ void CLaserOdometry2D::publishPoseFromSRF()
 
     //Compose Transformations
     robot_pose = srf_obj.laser_pose + LaserPoseOnTheRobot_inv;
-    ROS_DEBUG("[SRF] BASEodom = [%f %f %f]",robot_pose.x(),robot_pose.y(),robot_pose.yaw());
+    ROS_INFO("[SRF] BASEodom = [%f %f %f]",robot_pose.x(),robot_pose.y(),robot_pose.yaw());
 
 
     // Estimate linear/angular speeds (mandatory for base_local_planner)

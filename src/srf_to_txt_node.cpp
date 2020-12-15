@@ -8,14 +8,13 @@
 
 #include <boost/foreach.hpp>
 #include <boost/tokenizer.hpp>
-
+#include <fstream>
 #include <stdlib.h>
 #include <stdio.h>
 
 #include <string>
 #include <vector>
 #include <iomanip>
-#include <string>
 
 using namespace std;
 

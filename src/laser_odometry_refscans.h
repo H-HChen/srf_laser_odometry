@@ -21,13 +21,12 @@
 *  More Info: http://mapir.isa.uma.es/work/SRF-Odometry
 *********************************************************************/
 
-
+#include <mrpt/core/bits_math.h>
 #include <mrpt/poses/CPose2D.h>
-#include <mrpt/utils/CTicTac.h>
+#include <mrpt/system/CTicTac.h>
 #include <Eigen/Dense>
 #include <iostream>
-
-
+#include <unsupported/Eigen/MatrixFunctions>
 
 class SRF_RefS {
 public:
@@ -77,7 +76,7 @@ public:
     unsigned int method; //0 - consecutive scan alignment, 1 - keyscan alignment, 2 - multi-scan (hybrid) alignment
 
     //To measure runtimes
-    mrpt::utils::CTicTac	clock;
+    mrpt::system::CTicTac	clock;
     float                   runtime;
 
 
