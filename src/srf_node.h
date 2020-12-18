@@ -31,27 +31,12 @@
 #include <tf/transform_listener.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/LaserScan.h>
-#include <mrpt_bridge/pose.h>
 
 // SRF
 #include "laser_odometry_refscans.h"
 
-// MRPT related headers
-#include <mrpt/version.h>
-#if MRPT_VERSION>=0x130
-#	include <mrpt/obs/CObservation2DRangeScan.h>
-#   include <mrpt/obs/CObservationOdometry.h>
-    using namespace mrpt::obs;
-#else
-#	include <mrpt/slam/CObservation2DRangeScan.h>
-#   include <mrpt/slam/CObservationOdometry.h>
-    using namespace mrpt::slam;
-#endif
-#include <mrpt/poses/CPose3D.h>
 
-
-
-
+namespace SRF_LaserOdometry {
 class CLaserOdometry2D
 {
 public:
@@ -63,7 +48,8 @@ public:
     std::string operation_mode;
     double laser_min_range, laser_max_range;
     bool publish_tf;
-    mrpt::poses::CPose3D robot_pose, robot_oldpose;
+    Pose3d robot_pose, robot_oldpose;
+    Pose3d LaserPoseOnTheRobot, LaserPoseOnTheRobot_inv;
     int laser_counter, laser_decimation;
 
     //Core class of SRF
@@ -74,10 +60,11 @@ public:
     ~CLaserOdometry2D();
     bool is_initialized();
     bool scan_available();
+    void setLaserPoseFromTf();
     void Init();
     void odometryCalculation();     //Update odometric pose
     void publishPoseFromSRF();     //Publishes the last odometric pose with ROS format
-
+    void setLaserPose(const Pose3d& laser_pose);
 protected:
     ros::NodeHandle n;
     sensor_msgs::LaserScan last_scan;
@@ -86,6 +73,7 @@ protected:
     tf::TransformBroadcaster odom_broadcaster;
     ros::Time last_odom_time;
     nav_msgs::Odometry initial_robot_pose;
+    
 
     //Subscriptions & Publishers
     ros::Subscriber laser_sub, initPose_sub;
@@ -95,5 +83,5 @@ protected:
     void LaserCallBack(const sensor_msgs::LaserScan::ConstPtr& new_scan);
     void initPoseCallBack(const nav_msgs::Odometry::ConstPtr& new_initPose);
 };
-
+}
 #endif

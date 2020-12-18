@@ -23,12 +23,9 @@
 
 #include "srf_node.h"
 
-using namespace mrpt;
-using namespace mrpt::math;
-using namespace mrpt::obs;
-using namespace mrpt::poses;
 using namespace std;
 using namespace Eigen;
+using namespace SRF_LaserOdometry;
 
 
 // --------------------------
@@ -90,7 +87,6 @@ CLaserOdometry2D::~CLaserOdometry2D()
 {
 }
 
-
 bool CLaserOdometry2D::is_initialized()
 {
     return module_initialized;
@@ -122,11 +118,34 @@ void CLaserOdometry2D::Init()
         srf_obj.initialize(scan_size, fov, 2);
     }
 
+    setLaserPoseFromTf();
 
+    //Robot initial pose
+    Pose3d robotInitialPose = Pose3d::Identity();
+    robotInitialPose = Eigen::Quaterniond(initial_robot_pose.pose.pose.orientation.w,
+                                            initial_robot_pose.pose.pose.orientation.x,
+                                            initial_robot_pose.pose.pose.orientation.y,
+                                            initial_robot_pose.pose.pose.orientation.z);
+
+    robotInitialPose.translation()(0) = initial_robot_pose.pose.pose.position.x;
+    robotInitialPose.translation()(1) = initial_robot_pose.pose.pose.position.y;
+
+    //Set the Laser initial pose = Robot_initial_pose + LaserPoseOnTheRobot
+    srf_obj.laser_pose = robotInitialPose * LaserPoseOnTheRobot;
+    srf_obj.laser_oldpose = robotInitialPose * LaserPoseOnTheRobot;
+
+    module_initialized = true;
+    last_odom_time = ros::Time::now();
+    ROS_INFO("[SRF] Configuration Done.");
+}
+
+void CLaserOdometry2D::setLaserPoseFromTf()
+{
     //Set laser pose on the robot (through tF)
     // This allow estimation of the odometry with respect to the robot base reference system.
-    mrpt::poses::CPose3D LaserPoseOnTheRobot;
     tf::StampedTransform transform;
+    transform.setIdentity();
+
     try
     {
         tf_listener.lookupTransform(base_frame_id, last_scan.header.frame_id, ros::Time(0), transform);
@@ -137,70 +156,42 @@ void CLaserOdometry2D::Init()
         ros::Duration(1.0).sleep();
     }
 
-    //TF:transform -> mrpt::CPose3D (see mrpt-ros-bridge)
-    const tf::Vector3 &t = transform.getOrigin();
-    LaserPoseOnTheRobot.x() = t[0];
-    LaserPoseOnTheRobot.y() = t[1];
-    LaserPoseOnTheRobot.z() = t[2];
+  //TF:transform -> Eigen::Isometry3d
+
     const tf::Matrix3x3 &basis = transform.getBasis();
-    mrpt::math::CMatrixDouble33 R;
+    Eigen::Matrix3d R;
+
     for(int r = 0; r < 3; r++)
         for(int c = 0; c < 3; c++)
-            R(r,c) = basis[r][c];
-    LaserPoseOnTheRobot.setRotationMatrix(R);
-    //LaserPoseOnTheRobot.setYawPitchRoll(LaserPoseOnTheRobot.yaw() - 0.1f, 0.f, 0.f);
+        R(r,c) = basis[r][c];
 
-    //Robot initial pose
-    mrpt::poses::CPose3D robotInitialPose;
-    geometry_msgs::Pose _src = initial_robot_pose.pose.pose;
-    mrpt_bridge::convert(_src,robotInitialPose);
+    Pose3d laser_tf(R);
 
-    //Set the Laser initial pose = Robot_initial_pose + LaserPoseOnTheRobot
-    srf_obj.laser_pose = CPose2D(robotInitialPose + LaserPoseOnTheRobot);
-    srf_obj.laser_oldpose = CPose2D(robotInitialPose + LaserPoseOnTheRobot);
+    const tf::Vector3 &t = transform.getOrigin();
+    laser_tf.translation()(0) = t[0];
+    laser_tf.translation()(1) = t[1];
+    laser_tf.translation()(2) = t[2];
 
-    module_initialized = true;
-    last_odom_time = ros::Time::now();
-    ROS_INFO("[SRF] Configuration Done.");
+    setLaserPose(laser_tf);
 }
 
+void CLaserOdometry2D::setLaserPose(const Pose3d& laser_pose)
+{
+  //Set laser pose on the robot
 
+  LaserPoseOnTheRobot     = laser_pose;
+  LaserPoseOnTheRobot_inv = LaserPoseOnTheRobot.inverse();
+}
 
 void CLaserOdometry2D::publishPoseFromSRF()
 {
-
-    ROS_INFO("[SRF] LASERodom = [%f %f %f]",srf_obj.laser_pose.x(),srf_obj.laser_pose.y(),srf_obj.laser_pose.phi());
-
-    // GET ROBOT POSE from LASER POSE
-    //--------------------------------
-    mrpt::poses::CPose3D LaserPoseOnTheRobot_inv;
-    tf::StampedTransform transform;
-    try
-    {
-        tf_listener.lookupTransform(last_scan.header.frame_id, base_frame_id, ros::Time(0), transform);
-    }
-    catch (tf::TransformException &ex)
-    {
-        ROS_ERROR("%s",ex.what());
-        ros::Duration(1.0).sleep();
-    }
-
-    //TF:transform -> mrpt::CPose3D (see mrpt-ros-bridge)
-    const tf::Vector3 &t = transform.getOrigin();
-    LaserPoseOnTheRobot_inv.x() = t[0];
-    LaserPoseOnTheRobot_inv.y() = t[1];
-    LaserPoseOnTheRobot_inv.z() = t[2];
-    const tf::Matrix3x3 &basis = transform.getBasis();
-    mrpt::math::CMatrixDouble33 R;
-    for(int r = 0; r < 3; r++)
-        for(int c = 0; c < 3; c++)
-            R(r,c) = basis[r][c];
-    LaserPoseOnTheRobot_inv.setRotationMatrix(R);
-
+    setLaserPoseFromTf();
     //Compose Transformations
-    robot_pose = srf_obj.laser_pose + LaserPoseOnTheRobot_inv;
-    ROS_DEBUG("[SRF] BASEodom = [%f %f %f]",robot_pose.x(),robot_pose.y(),robot_pose.yaw());
-
+    robot_pose = srf_obj.laser_pose * LaserPoseOnTheRobot_inv;
+    ROS_INFO("BASEodom = [%f %f %f]",
+                robot_pose.translation()(0),
+                robot_pose.translation()(1),
+                getYaw(robot_pose.rotation()));
 
     // Estimate linear/angular speeds (mandatory for base_local_planner)
     // last_scan -> the last scan received (practically now)
@@ -225,10 +216,10 @@ void CLaserOdometry2D::publishPoseFromSRF()
             odom_trans.header.stamp = ros::Time::now();
             odom_trans.header.frame_id = odom_frame_id;
             odom_trans.child_frame_id = base_frame_id;
-            odom_trans.transform.translation.x = robot_pose.x();
-            odom_trans.transform.translation.y = robot_pose.y();
+            odom_trans.transform.translation.x = robot_pose.translation()(0);
+            odom_trans.transform.translation.y = robot_pose.translation()(1);
             odom_trans.transform.translation.z = 0.0;
-            odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(robot_pose.yaw());
+            odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(getYaw(robot_pose.rotation()));
             //send the transform
             odom_broadcaster.sendTransform(odom_trans);
         }
@@ -240,10 +231,10 @@ void CLaserOdometry2D::publishPoseFromSRF()
         odom.header.stamp = last_scan.header.stamp;
         odom.header.frame_id = odom_frame_id;
         //set the position
-        odom.pose.pose.position.x = robot_pose.x();
-        odom.pose.pose.position.y = robot_pose.y();
+        odom.pose.pose.position.x = robot_pose.translation()(0);
+        odom.pose.pose.position.y = robot_pose.translation()(0);
         odom.pose.pose.position.z = 0.0;
-        odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(robot_pose.yaw());
+        odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(getYaw(robot_pose.rotation()));
         //set the velocity
         odom.child_frame_id = base_frame_id;
         odom.twist.twist.linear.x = lin_speed_x;    //linear speed
@@ -270,25 +261,6 @@ void CLaserOdometry2D::LaserCallBack(const sensor_msgs::LaserScan::ConstPtr& new
         last_scan = *new_scan;
         laser_counter++;
         //ROS_INFO([SRF] "Laser Counter %u",laser_counter);
-
-
-        //FOR SIMULATION ONLY
-        //-------------------
-        //Add noise to scans
-        /*
-        double noise_mean = 0.0;
-        double noise_std = 0.01;
-        for (unsigned int i = 0; i<last_scan.ranges.size(); i++)
-        {
-            //Simualte Gaussian noise
-            double x = 0.0;
-            for( int j=0; j<12; j++ )
-                x += std::rand()/(RAND_MAX+1.0);
-
-            last_scan.ranges[i] += (noise_std*(x-6.0) + noise_mean);
-        }
-        */
-
 
         //Initialize module on first scan
         if (first_laser_scan)

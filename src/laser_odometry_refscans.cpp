@@ -23,12 +23,9 @@
 
 #include "laser_odometry_refscans.h"
 
-
-
 using namespace Eigen;
 using namespace std;
-using mrpt::math::square;
-using mrpt::utils::sign;
+using namespace SRF_LaserOdometry;
 
 
 void SRF_RefS::initialize(unsigned int size, float FOV_rad, unsigned int odo_method)
@@ -43,7 +40,7 @@ void SRF_RefS::initialize(unsigned int size, float FOV_rad, unsigned int odo_met
     new_ref_scan = true;
 	
     //Resize original range scan
-    range_wf.resize(width);
+    range_wf = Eigen::MatrixXf::Constant(1, width, 1);
 
     //Resize the transformation matrices
     transformations.resize(ctf_levels);
@@ -64,47 +61,61 @@ void SRF_RefS::initialize(unsigned int size, float FOV_rad, unsigned int odo_met
     yy_12.resize(pyr_levels); yy_13.resize(pyr_levels);
     range_warped.resize(pyr_levels); xx_warped.resize(pyr_levels); yy_warped.resize(pyr_levels);
     range_3_warpedTo2.resize(pyr_levels); xx_3_warpedTo2.resize(pyr_levels); yy_3_warpedTo2.resize(pyr_levels);
-
+    
 	for (unsigned int i = 0; i<pyr_levels; i++)
     {
         s = pow(2.f,int(i));
         cols_i = ceil(float(width)/float(s));
 
-        range_1[i].resize(cols_i); range_2[i].resize(cols_i); range_3[i].resize(cols_i);
-        range_12[i].resize(cols_i); range_13[i].resize(cols_i);
-        range_1[i].fill(0.f); range_2[i].fill(0.f); range_3[i].fill(0.f);
-        xx_1[i].resize(cols_i); xx_2[i].resize(cols_i); xx_3[i].resize(cols_i);
-        xx_12[i].resize(cols_i); xx_13[i].resize(cols_i);
-        xx_1[i].fill(0.f); xx_2[i].fill(0.f); xx_3[i].fill(0.f);
-        yy_1[i].resize(cols_i); yy_2[i].resize(cols_i); yy_3[i].resize(cols_i);
-        yy_12[i].resize(cols_i); yy_13[i].resize(cols_i);
-        yy_1[i].fill(0.f); yy_2[i].fill(0.f); yy_3[i].fill(0.f);
+        range_1[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        range_2[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        range_3[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+
+        range_12[i].resize(1, cols_i); 
+        range_13[i].resize(1, cols_i);
+
+        xx_1[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        xx_2[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        xx_3[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+
+        xx_12[i].resize(1, cols_i); 
+        xx_13[i].resize(1, cols_i);
+
+        yy_1[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        yy_2[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        yy_3[i] = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+
+        yy_12[i].resize(1, cols_i); 
+        yy_13[i].resize(1, cols_i);
 
 		if (cols_i <= cols)
 		{
-            range_warped[i].resize(cols_i); xx_warped[i].resize(cols_i); yy_warped[i].resize(cols_i);
-            range_3_warpedTo2[i].resize(cols_i); xx_3_warpedTo2[i].resize(cols_i); yy_3_warpedTo2[i].resize(cols_i);
+            range_warped[i].resize(1, cols_i); xx_warped[i].resize(1, cols_i); yy_warped[i].resize(1, cols_i);
+            range_3_warpedTo2[i].resize(1, cols_i); xx_3_warpedTo2[i].resize(1, cols_i); yy_3_warpedTo2[i].resize(1, cols_i);
 		}
     }
 
     //Resize aux variables
-    dt_12.resize(cols); dt_13.resize(cols);
-    dtita_12.resize(cols); dtita_13.resize(cols);
-    weights_12.resize(cols); weights_13.resize(cols);
-    null_12.resize(cols); null_13.resize(cols);
-    null_12.fill(false); null_13.fill(false);
-	cov_odo.assign(0.f);
-    outliers.resize(cols);
-    outliers.fill(false);
+    dt_12.resize(1, cols); dt_13.resize(1, cols);
+    dtita_12.resize(1, cols); dtita_13.resize(1, cols);
+    weights_12.resize(1, cols); weights_13.resize(1, cols);
+    null_12    = Eigen::MatrixXi::Constant(1, cols, 0);
+    null_13    = Eigen::MatrixXi::Constant(1, cols, 0);
 
+    cov_odo = IncrementCov::Zero();
+    outliers = Eigen::MatrixXi::Constant(1, cols, 0);
 
 	//Compute gaussian mask
-	g_mask[0] = 1.f/16.f; g_mask[1] = 0.25f; g_mask[2] = 6.f/16.f; g_mask[3] = g_mask[1]; g_mask[4] = g_mask[0];
+	g_mask[0] = 1.f/16.f; 
+    g_mask[1] = 0.25f; 
+    g_mask[2] = 6.f/16.f; 
+    g_mask[3] = g_mask[1]; 
+    g_mask[4] = g_mask[0];
 
     //Initialize "last velocity" as zero
-	kai_abs.assign(0.f);
-	kai_loc_old.assign(0.f);
-    overall_trans_prev.setIdentity();
+	kai_abs     = MatrixS31::Zero();
+	kai_loc_old = MatrixS31::Zero();
+    overall_trans_prev.setIdentity(); //haven't modify
 }
 
 
@@ -138,7 +149,7 @@ void SRF_RefS::createScanPyramid()
 				//Inner pixels
                 if ((u>1)&&(u<cols_i-2))
                 {		
-					if (dcenter > 0.f)
+					if (std::isfinite(dcenter) && dcenter > 0.f)
 					{	
                         float sum = 0.f, weight = 0.f;
 
@@ -162,7 +173,7 @@ void SRF_RefS::createScanPyramid()
                 //Boundary
                 else
                 {
-                    if (dcenter > 0.f)
+                    if (std::isfinite(dcenter) && dcenter > 0.f)
 					{						
                         float sum = 0.f, weight = 0.f;
 
@@ -205,7 +216,7 @@ void SRF_RefS::createScanPyramid()
                     //Inner pixels
                     if ((u>0)&&(u<cols_i-1))
                     {
-                        if (dcenter > 0.f)
+                        if (std::isfinite(dcenter) && dcenter > 0.f)
                         {
                             float sum = 0.f, weight = 0.f;
 
@@ -229,7 +240,7 @@ void SRF_RefS::createScanPyramid()
                     //Boundary
                     else
                     {
-                        if (dcenter > 0.f)
+                        if (std::isfinite(dcenter) && dcenter > 0.f)
                         {
                             float sum = 0.f, weight = 0.f;
                             const unsigned int cols_i2 = range_1[i_1].rows();
@@ -303,8 +314,8 @@ void SRF_RefS::createScanPyramid()
 
 void SRF_RefS::calculateCoord()
 {		
-    null_12.fill(false);
-    null_13.fill(false);
+    null_12.fill(0);
+    null_13.fill(0);
     num_valid_range = 0;
 
     for (unsigned int u = 0; u < cols_i; u++)
@@ -348,8 +359,8 @@ void SRF_RefS::calculateCoord()
 void SRF_RefS::calculateRangeDerivatives()
 {	
     //Compute distances between points
-    Eigen::ArrayXf rtita_12(cols_i), rtita_13(cols_i);
-    rtita_12.fill(1.f); rtita_13.fill(1.f);
+    rtita_12 = Eigen::MatrixXf::Constant(1, cols_i, 1.f);
+    rtita_13 = Eigen::MatrixXf::Constant(1, cols_i, 1.f);
 
 	for (unsigned int u = 0; u < cols_i-1; u++)
     {
@@ -390,8 +401,8 @@ void SRF_RefS::calculateRangeDerivatives()
 void SRF_RefS::computeWeights()
 {
 	//The maximum weight size is reserved at the constructor
-    weights_12.fill(0.f);
-    weights_13.fill(0.f);
+    weights_12.setConstant(1, cols, 0.f);
+    weights_13.setConstant(1, cols, 0.f);
 	
     //Parameters for error_linearization - (kd = 1.f, k2d = 0.02f, ssigma = 100*e-4f works!)
     const float kd = 0.01f;
@@ -403,7 +414,7 @@ void SRF_RefS::computeWeights()
 	
 	for (unsigned int u = 1; u < cols_i-1; u++)
     {
-        if (null_12(u) == false)
+        if (null_12(u) == 0)
 		{	
 			//							Compute derivatives
 			//-----------------------------------------------------------------------
@@ -416,7 +427,7 @@ void SRF_RefS::computeWeights()
             weights_12(u) = sqrtf(1.f/w_der);
 		}
 
-        if (null_13(u) == false)
+        if (null_13(u) == 0)
         {
             //							Compute derivatives
             //-----------------------------------------------------------------------
@@ -439,8 +450,8 @@ void SRF_RefS::computeWeights()
 
 void SRF_RefS::solveSystemQuadResiduals3Scans()
 {
-    A.resize(num_valid_range,3);
-    B.resize(num_valid_range);
+    A.resize(num_valid_range, 3);
+    B.resize(num_valid_range, 1);
     unsigned int cont = 0;
     const float kdtita = (cols_i)/fovh;
 
@@ -449,7 +460,7 @@ void SRF_RefS::solveSystemQuadResiduals3Scans()
 
     for (unsigned int u = 1; u < cols_i-1; u++)
     {
-        if (null_12(u) == false)
+        if (null_12(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_12(u);
@@ -464,7 +475,7 @@ void SRF_RefS::solveSystemQuadResiduals3Scans()
             cont++;
         }
 
-        if (null_13(u) == false)
+        if (null_13(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_13(u);
@@ -481,20 +492,21 @@ void SRF_RefS::solveSystemQuadResiduals3Scans()
     }
 
     //Solve the linear system of equations using a minimum least squares method
-    MatrixXf AtA, AtB;
-    AtA.multiply_AtA(A);
-    AtB.multiply_AtB(A,B);
+    Eigen::MatrixXf AtA, AtB;
+    AtA = A.transpose()*A;
+    AtB = A.transpose()*B;
     kai_loc_level = AtA.ldlt().solve(AtB);
 
     //Covariance matrix calculation
-    VectorXf res = A*kai_loc_level - B;
+    Eigen::MatrixXf res(num_valid_range,1);
+    res = A*kai_loc_level - B;
     cov_odo = (1.f/float(num_valid_range-3))*AtA.inverse()*res.squaredNorm();
 }
 
 void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 {
-    A.resize(num_valid_range,3); Aw.resize(num_valid_range,3);
-    B.resize(num_valid_range); Bw.resize(num_valid_range);
+    A.resize(num_valid_range, 3); Aw.resize(num_valid_range, 3);
+    B.resize(num_valid_range, 1); Bw.resize(num_valid_range, 1);
     unsigned int cont = 0;
     const float kdtita = float(cols_i)/fovh;
     const float inv_kdtita = 1.f/kdtita;
@@ -508,7 +520,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
         const float cos_tita = cos(tita);
         const float sin_tita = sin(tita);
 
-        if (null_12(u) == false)
+        if (null_12(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_12(u);
@@ -523,7 +535,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
             cont++;
         }
 
-        if (null_13(u) == false)
+        if (null_13(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_13(u);
@@ -539,11 +551,12 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
     }
 
     //Solve the linear system of equations using a minimum least squares method
-    MatrixXf AtA, AtB;
-    AtA.multiply_AtA(A);
-    AtB.multiply_AtB(A,B);
+    Eigen::MatrixXf AtA, AtB;
+    AtA = A.transpose()*A;
+    AtB = A.transpose()*B;
     kai_loc_level = AtA.ldlt().solve(AtB);
-    VectorXf res = A*kai_loc_level - B;
+    Eigen::MatrixXf res(num_valid_range,1);
+    res = A*kai_loc_level - B;
 
     //Compute the median of res
     vector<float> aux_vector;
@@ -584,7 +597,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
-            if (null_12(u) == false)
+            if (null_12(u) == 0)
             {
                 float res_weight;
                 if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
@@ -598,11 +611,13 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
                 cont++;
             }
 
-            if (null_13(u) == false)
+            if (null_13(u) == 0)
             {
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -614,8 +629,8 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
         }
 
         //Solve the linear system of equations using a minimum least squares method
-        AtA.multiply_AtA(Aw);
-        AtB.multiply_AtB(Aw,Bw);
+        AtA = Aw.transpose()*Aw;
+        AtB = Aw.transpose()*Bw;
         kai_loc_level = AtA.ldlt().solve(AtB);
         res = A*kai_loc_level - B;
 
@@ -659,12 +674,12 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
     unsigned int valid_here = 0;
     for (unsigned int u = 1; u < cols_i-1; u++)
     {
-        if (null_13(u) == false)
+        if (null_13(u) == 0)
             valid_here++;
     }
 
-    A.resize(valid_here,3); Aw.resize(valid_here,3);
-    B.resize(valid_here); Bw.resize(valid_here);
+    A.resize(valid_here, 3); Aw.resize(valid_here, 3);
+    B.resize(valid_here, 1); Bw.resize(valid_here, 1);
     unsigned int cont = 0;
     const float kdtita = float(cols_i)/fovh;
     const float inv_kdtita = 1.f/kdtita;
@@ -678,7 +693,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
         const float cos_tita = cos(tita);
         const float sin_tita = sin(tita);
 
-        if (null_13(u) == false)
+        if (null_13(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_13(u);
@@ -694,11 +709,12 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
     }
 
     //Solve the linear system of equations using a minimum least squares method
-    MatrixXf AtA, AtB;
-    AtA.multiply_AtA(A);
-    AtB.multiply_AtB(A,B);
+    Eigen::MatrixXf AtA, AtB;
+    AtA = A.transpose()*A;
+    AtB = A.transpose()*B;
     kai_loc_level = AtA.ldlt().solve(AtB);
-    VectorXf res = A*kai_loc_level - B;
+    Eigen::MatrixXf res(num_valid_range,1);
+    res = A*kai_loc_level - B;
     //cout << endl << "max res: " << res.maxCoeff();
     //cout << endl << "min res: " << res.minCoeff();
 
@@ -741,11 +757,13 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
-            if (null_13(u) == false)
+            if (null_13(u) == 0)
             {
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -757,8 +775,8 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
         }
 
         //Solve the linear system of equations using a minimum least squares method
-        AtA.multiply_AtA(Aw);
-        AtB.multiply_AtB(Aw,Bw);
+        AtA = Aw.transpose()*Aw;
+        AtB = Aw.transpose()*Bw;
         kai_loc_level = AtA.ldlt().solve(AtB);
         res = A*kai_loc_level - B;
 
@@ -783,12 +801,12 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
     unsigned int valid_here = 0;
     for (unsigned int u = 1; u < cols_i-1; u++)
     {
-        if (null_12(u) == false)
+        if (null_12(u) == 0)
             valid_here++;
     }
 
-    A.resize(valid_here,3); Aw.resize(valid_here,3);
-    B.resize(valid_here); Bw.resize(valid_here);
+    A.resize(valid_here, 3); Aw.resize(valid_here, 3);
+    B.resize(valid_here, 1); Bw.resize(valid_here, 1);
     unsigned int cont = 0;
     const float kdtita = float(cols_i)/fovh;
     const float inv_kdtita = 1.f/kdtita;
@@ -802,7 +820,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
         const float cos_tita = cos(tita);
         const float sin_tita = sin(tita);
 
-        if (null_12(u) == false)
+        if (null_12(u) == 0)
         {
             // Precomputed expressions
             const float tw = weights_12(u);
@@ -818,11 +836,12 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
     }
 
     //Solve the linear system of equations using a minimum least squares method
-    MatrixXf AtA, AtB;
-    AtA.multiply_AtA(A);
-    AtB.multiply_AtB(A,B);
+    Eigen::MatrixXf AtA, AtB;
+    AtA = A.transpose()*A;
+    AtB = A.transpose()*B;
     kai_loc_level = AtA.ldlt().solve(AtB);
-    VectorXf res = A*kai_loc_level - B;
+    Eigen::MatrixXf res(num_valid_range,1);
+     = A*kai_loc_level - B;
     //cout << endl << "max res: " << res.maxCoeff();
     //cout << endl << "min res: " << res.minCoeff();
 
@@ -865,7 +884,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
-            if (null_12(u) == false)
+            if (null_12(u) == 0)
             {
                 float res_weight;
                 if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
@@ -881,8 +900,8 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
         }
 
         //Solve the linear system of equations using a minimum least squares method
-        AtA.multiply_AtA(Aw);
-        AtB.multiply_AtB(Aw,Bw);
+        AtA = Aw.transpose()*Aw;
+        AtB = Aw.transpose()*Bw;
         kai_loc_level = AtA.ldlt().solve(AtB);
         res = A*kai_loc_level - B;
 
@@ -904,14 +923,13 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
 
 void SRF_RefS::performWarping()
 {
-    Matrix3f acu_trans;
+    Eigen::Matrix3f acu_trans;
     acu_trans.setIdentity();
     for (unsigned int i=0; i<=level; i++)
         acu_trans = transformations[i]*acu_trans;
 
-    ArrayXf wacu(cols_i);
-    wacu.fill(0.f);
-    range_warped[image_level].fill(0.f);
+    Eigen::MatrixXf wacu = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+    range_warped[image_level].setConstant(1, cols_i, 0.f);
 
     const float cols_lim = float(cols_i-1);
     const float kdtita = cols_i/fovh;
@@ -978,14 +996,15 @@ void SRF_RefS::performWarping()
 
 void SRF_RefS::performBestWarping()
 {
-    Matrix3f acu_trans;
+    Eigen::Matrix3f acu_trans;
     acu_trans.setIdentity();
     for (unsigned int i=0; i<=level; i++)
         acu_trans = transformations[i]*acu_trans;
-
-    ArrayXf x_trans(cols_i), y_trans(cols_i), u_trans(cols_i), range_trans(cols_i);
-    x_trans.fill(0.f); y_trans.fill(0.f); range_trans.fill(0.f);
-    range_warped[image_level].fill(0.f);
+    Eigen::MatrixXf x_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f); 
+    Eigen::MatrixXf y_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f); 
+    Eigen::MatrixXf u_trans(1, cols_i);
+    Eigen::MatrixXf range_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+    range_warped[image_level].setConstant(1, cols_i, 0.f);
 
     const float kdtita = float(cols_i)/fovh;
 
@@ -1037,7 +1056,7 @@ void SRF_RefS::performBestWarping()
 void SRF_RefS::warpScan3To2()
 {
     //Use the previous transformation to warp the scan 3 forward (to 2)
-    Matrix3f acu_trans_inv = overall_trans_prev.inverse();
+    Eigen::Matrix3f acu_trans_inv = overall_trans_prev.inverse();
 
 
     //Create forward-warped scans for every level
@@ -1047,10 +1066,11 @@ void SRF_RefS::warpScan3To2()
         cols_i = ceil(float(cols)/float(s));
         image_level = ctf_levels - i + round(log2(round(float(width)/float(cols)))) - 1;
 
-
-        ArrayXf x_trans(cols_i), y_trans(cols_i), u_trans(cols_i), range_trans(cols_i);
-        x_trans.fill(0.f); y_trans.fill(0.f); range_trans.fill(0.f);
-        range_3_warpedTo2[image_level].fill(0.f);
+        Eigen::MatrixXf x_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f); 
+        Eigen::MatrixXf y_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f); 
+        Eigen::MatrixXf u_trans(1, cols_i);
+        Eigen::MatrixXf range_trans = Eigen::MatrixXf::Constant(1, cols_i, 0.f);
+        range_3_warpedTo2[image_level].setConstant(1, cols_i, 0.f);
 
         const float kdtita = float(cols_i)/fovh;
 
@@ -1113,21 +1133,23 @@ void SRF_RefS::odometryCalculation()
     //==================================================================================
     //						DIFERENTIAL  ODOMETRY  MULTILEVEL
     //==================================================================================
+    ros::WallTime start = ros::WallTime::now();
 
-    clock.Tic();
     createScanPyramid();
+
     if (new_ref_scan)
     {
         range_3_warpedTo2 = range_3;
         xx_3_warpedTo2 = xx_3;
         yy_3_warpedTo2 = yy_3;
     }
-    else
+    else{
         warpScan3To2();
-
+    }
     //Coarse-to-fine scheme
     for (unsigned int i=0; i<ctf_levels; i++)
     {
+        
         //Previous computations
         transformations[i].setIdentity();
 
@@ -1145,9 +1167,11 @@ void SRF_RefS::odometryCalculation()
                 xx_warped[image_level] = xx_1[image_level];
                 yy_warped[image_level] = yy_1[image_level];
             }
-            else
+            else{
+
                 performBestWarping();
 
+            }
 
             //2. Calculate inter coords
             calculateCoord();
@@ -1159,30 +1183,37 @@ void SRF_RefS::odometryCalculation()
             computeWeights();
 
             //5. Solve odometry
+            
             if (num_valid_range > 3)
             {
                 if (method == 0)
                     solveSystemSmoothTruncQuadOnly12();
-                else if (method == 1)
+
+                else if (method == 1){
                     solveSystemSmoothTruncQuadOnly13();
+                }
+
                 else
                 {
-                    if  (new_ref_scan == true)
+                    if  (new_ref_scan == true){
                         solveSystemSmoothTruncQuadOnly13();
+                    }
 
-                    else
+                    else{
                         solveSystemSmoothTruncQuad3Scans();
+                    }
                 }
             }
-
+            
             //6. Filter solution
-            filterLevelSolution();
+            if (!filterLevelSolution()){return;}
 
-            if (kai_loc_level.norm() < 0.05f)
-            {
-                //printf("\n Number of non-linear iterations: %d", k+1);
-                break;
-            }
+            //if (kai_loc_level.norm() < 0.05f)
+            //{
+            //    printf("\n Number of non-linear iterations: %d", k+1);
+            //    break;
+            //}
+
         }
     }
 
@@ -1190,39 +1221,39 @@ void SRF_RefS::odometryCalculation()
     if  (new_ref_scan == true)
         new_ref_scan = false;
 
-    runtime = 1000.f*clock.Tac();
+    runtime = ros::WallTime::now() - start;
     cout << endl << "Time odometry (ms): " << runtime;
-
     //Update poses
     PoseUpdate();
 
     //Update the reference scan if necessary
     updateReferenceScan();
+
 }
 
-void SRF_RefS::filterLevelSolution()
+bool SRF_RefS::filterLevelSolution()
 {
     //		Calculate Eigenvalues and Eigenvectors
     //----------------------------------------------------------
-    SelfAdjointEigenSolver<Matrix3f> eigensolver(cov_odo);
-    if (eigensolver.info() != Success)
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXf> eigensolver(cov_odo);
+    if (eigensolver.info() != Eigen::Success)
     {
         printf("\n Eigensolver couldn't find a solution. Pose is not updated");
-        return;
+        return false;
     }
 	
     //First, we have to describe both the new linear and angular speeds in the "eigenvector" basis
     //-------------------------------------------------------------------------------------------------
-    Matrix3f Bii = eigensolver.eigenvectors();
-    Vector3f kai_b = Bii.colPivHouseholderQr().solve(kai_loc_level);
+    Eigen::Matrix<float,3,3> Bii = eigensolver.eigenvectors();
+    Eigen::Matrix<float,3,1> kai_b = Bii.colPivHouseholderQr().solve(kai_loc_level);
 
 
     //Second, we have to describe both the old linear and angular speeds in the "eigenvector" basis too
     //-------------------------------------------------------------------------------------------------
-    Vector3f kai_loc_sub;
+    MatrixS31 kai_loc_sub;
 
     //Important: we have to substract the solutions from previous levels
-    Matrix3f acu_trans = Matrix3f::Identity();
+    Eigen::Matrix3f acu_trans = Matrix3f::Identity();
     for (unsigned int i=0; i<=level; i++)
         acu_trans = transformations[i]*acu_trans;
 
@@ -1234,14 +1265,14 @@ void SRF_RefS::filterLevelSolution()
         kai_loc_sub(2) = -acos(acu_trans(0,0))*sign(acu_trans(1,0));
     kai_loc_sub += kai_loc_old;
 
-    Vector3f kai_b_old = Bii.colPivHouseholderQr().solve(kai_loc_sub);
+    Eigen::Matrix<float,3,1> kai_b_old = Bii.colPivHouseholderQr().solve(kai_loc_sub);
 
     //Filter speed
     //const float cf = 15e3f*expf(-int(level)), df = 0.05f*expf(-int(level));
     const float cf = 5e3f*expf(-int(level)), df = 0.02f*expf(-int(level));
     //const float cf = 0*expf(-int(level)), df = 0.f*expf(-int(level));
 
-    Vector3f kai_b_fil;
+    Eigen::Matrix<float,3,1> kai_b_fil;
     for (unsigned int i=0; i<3; i++)
     {
         kai_b_fil(i,0) = (kai_b(i,0) + (cf*eigensolver.eigenvalues()(i,0) + df)*kai_b_old(i,0))/(1.f + cf*eigensolver.eigenvalues()(i,0) + df);
@@ -1249,7 +1280,7 @@ void SRF_RefS::filterLevelSolution()
     }
 
     //Transform filtered speed to local reference frame and compute transformation
-    Vector3f kai_loc_fil = Bii.inverse().colPivHouseholderQr().solve(kai_b_fil);
+    Eigen::Matrix<float,3,1> kai_loc_fil = Bii.inverse().colPivHouseholderQr().solve(kai_b_fil);
 
     //transformation
     const float incrx = kai_loc_fil(0);
@@ -1275,17 +1306,24 @@ void SRF_RefS::filterLevelSolution()
     new_trans(1,2) = (V*incr)(1);
 
     transformations[level] = new_trans*transformations[level];
+    
+    return true;
 }
 
 void SRF_RefS::PoseUpdate()
 {
     //First, compute the overall transformation
     //---------------------------------------------------
-    Matrix3f acu_trans = Matrix3f::Identity();
+
+    Eigen::Matrix3f acu_trans;
+
+    acu_trans.setIdentity();
+
     for (unsigned int i=1; i<=ctf_levels; i++)
         acu_trans = transformations[i-1]*acu_trans;
-    overall_trans_prev = overall_trans_prev*acu_trans;
 
+
+    overall_trans_prev = overall_trans_prev*acu_trans;
 
     //				Compute kai_loc and kai_abs
     //--------------------------------------------------------
@@ -1296,7 +1334,8 @@ void SRF_RefS::PoseUpdate()
     else
         kai_loc(2) = acos(acu_trans(0,0))*sign(acu_trans(1,0));
 
-    float phi = laser_pose.phi();
+    float phi = getYaw(laser_pose.rotation());
+
 
     kai_abs(0) = kai_loc(0)*cos(phi) - kai_loc(1)*sin(phi);
     kai_abs(1) = kai_loc(0)*sin(phi) + kai_loc(1)*cos(phi);
@@ -1308,17 +1347,24 @@ void SRF_RefS::PoseUpdate()
     //						Update poses
     //-------------------------------------------------------
     laser_oldpose = laser_pose;
-    mrpt::poses::CPose2D pose_aux_2D(acu_trans(0,2), acu_trans(1,2), kai_loc(2));
-    laser_pose = laser_pose + pose_aux_2D;
+    Pose3d pose_aux_2D = Pose3d::Identity();
+    pose_aux_2D = matrixYaw(double(kai_loc(2)));
+    pose_aux_2D.translation()(0) = acu_trans(0,2);
+    pose_aux_2D.translation()(1) = acu_trans(1,2);
+    laser_pose = laser_pose * pose_aux_2D;
 
-
+    ROS_INFO("LASERodom = [%f %f %f]",
+                laser_pose.translation()(0),
+                laser_pose.translation()(1),
+                getYaw(laser_pose.rotation()));
 
     //                  Compute kai_loc_old
     //-------------------------------------------------------
-    phi = laser_pose.phi();
+    phi = getYaw(laser_pose.rotation());
     kai_loc_old(0) = kai_abs(0)*cos(phi) + kai_abs(1)*sin(phi);
     kai_loc_old(1) = -kai_abs(0)*sin(phi) + kai_abs(1)*cos(phi);
     kai_loc_old(2) = kai_abs(2);
+
 }
 
 void SRF_RefS::updateReferenceScan()
@@ -1345,7 +1391,7 @@ void SRF_RefS::updateReferenceScan()
         range_3 = range_1; xx_3 = xx_1; yy_3 = yy_1;
 
         //Overall_trans_prev = T12
-        Matrix3f acu_trans = Matrix3f::Identity();
+        Eigen::Matrix3f acu_trans = Matrix3f::Identity();
 //        for (unsigned int i=1; i<=ctf_levels; i++)
 //            acu_trans = transformations[i-1]*acu_trans;
         overall_trans_prev = acu_trans;
