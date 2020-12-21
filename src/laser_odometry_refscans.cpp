@@ -33,7 +33,7 @@ void SRF_RefS::initialize(unsigned int size, float FOV_rad, unsigned int odo_met
     method = odo_method;
     cols = size;
     width = size;
-    fovh = FOV_rad*size/(size-1);           //Exact for simulation, but I don't know how the datasets are given...
+    fovh = FOV_rad;//*size/(size-1);           //Exact for simulation, but I don't know how the datasets are given...
     ctf_levels = ceilf(log2(cols) - 4.3f);
     iter_irls = 8;
     no_ref_scan = true;
@@ -47,7 +47,7 @@ void SRF_RefS::initialize(unsigned int size, float FOV_rad, unsigned int odo_met
     for (unsigned int i = 0; i < ctf_levels; i++)
     {
         transformations[i].resize(3,3);
-        transformations[i].setIdentity();
+        //transformations[i].setIdentity();
     }
 
 	//Resize pyramid
@@ -326,7 +326,7 @@ void SRF_RefS::calculateCoord()
             range_12[image_level](u) = 0.f;
             xx_12[image_level](u) = 0.f;
             yy_12[image_level](u) = 0.f;
-            null_12(u) = true;
+            null_12(u) = 1;
 		}
 		else
 		{
@@ -343,7 +343,7 @@ void SRF_RefS::calculateCoord()
             range_13[image_level](u) = 0.f;
             xx_13[image_level](u) = 0.f;
             yy_13[image_level](u) = 0.f;
-            null_13(u) = true;
+            null_13(u) = 1;
         }
         else
         {
@@ -557,7 +557,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
     kai_loc_level = AtA.ldlt().solve(AtB);
     Eigen::MatrixXf res(num_valid_range,1);
     res = A*kai_loc_level - B;
-
+    /*
     //Compute the median of res
     vector<float> aux_vector;
     for (unsigned int k = 0; k<res.rows(); k++)
@@ -579,6 +579,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 
     //Compute the energy
     float new_energy = 0.f, last_energy;
+
     for (unsigned int i=0; i<res.rows(); i++)
     {
         if (abs(res(i)) < c)     new_energy += 0.5f*square(res(i))*(1.f - 0.5f*square(res(i)*inv_c));
@@ -587,21 +588,40 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
     //printf("\n\nEnergy(0) = %f", new_energy);
     last_energy = 2.f*new_energy;
     unsigned int iter = 1;
-
+    
     //Solve iterative reweighted least squares
     //===================================================================
-    while ((new_energy < 0.995f*last_energy)&&(iter < 10))
+    //while ((new_energy < 0.995f*last_energy)&&(iter < 10))
+    */
+    float aver_dt = 0.f, aver_res = 0.f; unsigned int ind = 0;
+    for (unsigned int u = 1; u < cols_i-1; u++){
+        if (null_12(u) == 0)
+        {
+        aver_dt  += std::abs(dt_12(u));
+        aver_res += std::abs(res(ind++));
+        }
+        if (null_13(u) == 0)
+        {
+        aver_dt  += std::abs(dt_13(u));
+        aver_res += std::abs(res(ind++));
+        }
+    }
+    aver_dt /= cont; aver_res /= cont;
+    const float k = 10.f/aver_dt; //200
+
+    for (unsigned int i=1; i<=iter_irls; i++)
     {
         cont = 0;
-        last_energy = new_energy;
+        //last_energy = new_energy;
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
             if (null_12(u) == 0)
             {
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -613,11 +633,11 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 
             if (null_13(u) == 0)
             {
-                //const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -635,7 +655,8 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
         res = A*kai_loc_level - B;
 
         //Compute the energy
-        new_energy = 0.f;
+        //new_energy = 0.f;
+        /*
         for (unsigned int i=0; i<res.rows(); i++)
         {
             if (abs(res(i)) < c)    new_energy += 0.5f*square(res(i))*(1.f - 0.5f*square(res(i)*inv_c));
@@ -643,7 +664,7 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
         }
         //printf("\nEnergy(%d) = %f", iter, new_energy);
         iter++;
-
+        */
         //Recompute c
         //-------------------------------------------------
         //Compute the median of res
@@ -721,6 +742,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
     //cout << endl << "min res: " << res.minCoeff();
 
     //Compute the median of res
+    /*
     vector<float> aux_vector;
     for (unsigned int k = 0; k<res.rows(); k++)
         aux_vector.push_back(res(k));
@@ -753,19 +775,35 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
     //Solve iterative reweighted least squares
     //===================================================================
     while ((new_energy < 0.995f*last_energy)&&(iter < 10))
+    */
+
+    float aver_dt = 0.f, aver_res = 0.f; unsigned int ind = 0;
+    for (unsigned int u = 1; u < cols_i-1; u++)
+        if (null_13(u) == 0)
+        {
+        aver_dt  += std::abs(dt_13(u));
+        aver_res += std::abs(res(ind++));
+        }
+    aver_dt /= cont; aver_res /= cont;
+  //    printf("\n Aver dt = %f, aver res = %f", aver_dt, aver_res);
+
+
+    const float k = 10.f/aver_dt; //200
+
+    for (unsigned int i=1; i<=iter_irls; i++)
     {
         cont = 0;
-        last_energy = new_energy;
+        //last_energy = new_energy;
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
             if (null_13(u) == 0)
             {
-                //const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -783,6 +821,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
         res = A*kai_loc_level - B;
 
         //Compute the energy
+        /*
         new_energy = 0.f;
         for (unsigned int i=0; i<res.rows(); i++)
         {
@@ -790,7 +829,8 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
             else                    new_energy += 0.25f*squared_c;
         }
         //printf("\nEnergy(%d) = %f", iter, new_energy);
-        iter++;
+        */
+        //iter++;
 
     }
 
@@ -848,6 +888,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
     //cout << endl << "min res: " << res.minCoeff();
 
     //Compute the median of res
+    /*
     vector<float> aux_vector;
     for (unsigned int k = 0; k<res.rows(); k++)
         aux_vector.push_back(res(k));
@@ -880,17 +921,34 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
     //Solve iterative reweighted least squares
     //===================================================================
     while ((new_energy < 0.995f*last_energy)&&(iter < 10))
+    */
+
+
+    float aver_dt = 0.f, aver_res = 0.f; unsigned int ind = 0;
+    for (unsigned int u = 1; u < cols_i-1; u++)
+        if (null_12(u) == 0)
+        {
+        aver_dt  += std::abs(dt_12(u));
+        aver_res += std::abs(res(ind++));
+        }
+    aver_dt /= cont; aver_res /= cont;
+  //    printf("\n Aver dt = %f, aver res = %f", aver_dt, aver_res);
+
+    const float k = 10.f/aver_dt; //200
+
+    for (unsigned int i=1; i<=iter_irls; i++)
     {
         cont = 0;
-        last_energy = new_energy;
+        //last_energy = new_energy;
 
         for (unsigned int u = 1; u < cols_i-1; u++)
         {
             if (null_12(u) == 0)
             {
-                float res_weight;
-                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                else                        res_weight = 0.f;
+                //float res_weight;
+                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                //else                        res_weight = 0.f;
+                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -908,6 +966,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
         res = A*kai_loc_level - B;
 
         //Compute the energy
+        /*
         new_energy = 0.f;
         for (unsigned int i=0; i<res.rows(); i++)
         {
@@ -916,6 +975,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
         }
         //printf("\nEnergy(%d) = %f", iter, new_energy);
         iter++;
+        */
     }
 
     //Covariance calculation
@@ -1012,7 +1072,7 @@ void SRF_RefS::performBestWarping()
 
     for (unsigned int u = 0; u<cols_i; u++)
     {
-        if (range_1[image_level](u) != 0.f)
+        if (range_1[image_level](u) > 0.f)
         {
             //Transform point to the warped reference frame
             x_trans(u) = acu_trans(0,0)*xx_1[image_level](u) + acu_trans(0,1)*yy_1[image_level](u) + acu_trans(0,2);
@@ -1079,7 +1139,7 @@ void SRF_RefS::warpScan3To2()
         //Compute transformed coordinates
         for (unsigned int u = 0; u<cols_i; u++)
         {
-            if (range_3[image_level](u) != 0.f)
+            if (range_3[image_level](u) > 0.f)
             {
                 //Transform point to the warped reference frame
                 x_trans(u) = acu_trans_inv(0,0)*xx_3[image_level](u) + acu_trans_inv(0,1)*yy_3[image_level](u) + acu_trans_inv(0,2);
@@ -1198,20 +1258,23 @@ void SRF_RefS::odometryCalculation()
                 else
                 {
                     if  (new_ref_scan == true){
-                        
                         solveSystemSmoothTruncQuadOnly13();
                     }
-
                     else{
-                        
                         solveSystemSmoothTruncQuad3Scans();
                     }
                 }
             }
             
             //6. Filter solution
-            if (!filterLevelSolution()){return;}
-
+            if (!filterLevelSolution()){
+                if  (new_ref_scan == true)
+                    new_ref_scan = false;
+                runtime = ros::WallTime::now() - start;
+                cout << endl << "Time odometry (ms): " << runtime;
+                updateReferenceScan();
+                return;}
+            //filterLevelSolution();
             if (kai_loc_level.norm() < 0.05f)
             {
                 printf("\n Number of non-linear iterations: %d", k+1);
@@ -1278,8 +1341,8 @@ bool SRF_RefS::filterLevelSolution()
 
 
     //Filter speed
-    //const float cf = 15e3f*expf(-int(level)), df = 0.05f*expf(-int(level));
-    const float cf = 5e3f*expf(-int(level)), df = 0.02f*expf(-int(level));
+    const float cf = 15e3f*expf(-int(level)), df = 0.05f*expf(-int(level));
+    //const float cf = 5e3f*expf(-int(level)), df = 0.02f*expf(-int(level));
     //const float cf = 0*expf(-int(level)), df = 0.f*expf(-int(level));
 
     Eigen::Matrix<float,3,1> kai_b_fil;
@@ -1298,7 +1361,7 @@ bool SRF_RefS::filterLevelSolution()
     //transformation
     const float incrx = kai_loc_fil(0);
     const float incry = kai_loc_fil(1);
-    const float rot = kai_loc_fil(2);
+    const float rot   = kai_loc_fil(2);
 
     Matrix3f new_trans = Matrix3f::Identity();
     new_trans(0,0) = cos(rot);
@@ -1327,9 +1390,7 @@ void SRF_RefS::PoseUpdate()
 {
     //First, compute the overall transformation
     //---------------------------------------------------
-
     Eigen::Matrix3f acu_trans;
-
     acu_trans.setIdentity();
 
     for (unsigned int i=1; i<=ctf_levels; i++)
@@ -1344,11 +1405,11 @@ void SRF_RefS::PoseUpdate()
     kai_loc(1) = acu_trans(1,2);
     if (acu_trans(0,0) > 1.f)
         kai_loc(2) = 0.f;
-    else
+    else{
         kai_loc(2) = acos(acu_trans(0,0))*sign(acu_trans(1,0));
+    }
 
     float phi = getYaw(laser_pose.rotation());
-
 
     kai_abs(0) = kai_loc(0)*cos(phi) - kai_loc(1)*sin(phi);
     kai_abs(1) = kai_loc(0)*sin(phi) + kai_loc(1)*cos(phi);
@@ -1360,7 +1421,9 @@ void SRF_RefS::PoseUpdate()
     //						Update poses
     //-------------------------------------------------------
     laser_oldpose = laser_pose;
+
     Pose3d pose_aux_2D = Pose3d::Identity();
+
     pose_aux_2D = matrixYaw(double(kai_loc(2)));
     pose_aux_2D.translation()(0) = acu_trans(0,2);
     pose_aux_2D.translation()(1) = acu_trans(1,2);
@@ -1374,9 +1437,9 @@ void SRF_RefS::PoseUpdate()
     //                  Compute kai_loc_old
     //-------------------------------------------------------
     phi = getYaw(laser_pose.rotation());
-    kai_loc_old(0) = kai_abs(0)*cos(phi) + kai_abs(1)*sin(phi);
+    kai_loc_old(0) =  kai_abs(0)*cos(phi) + kai_abs(1)*sin(phi);
     kai_loc_old(1) = -kai_abs(0)*sin(phi) + kai_abs(1)*cos(phi);
-    kai_loc_old(2) = kai_abs(2);
+    kai_loc_old(2) =  kai_abs(2);
 
 }
 
