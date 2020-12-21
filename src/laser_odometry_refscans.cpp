@@ -613,11 +613,11 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 
             if (null_13(u) == 0)
             {
-                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+                //const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
-                //float res_weight;
-                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                //else                        res_weight = 0.f;
+                float res_weight;
+                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -667,6 +667,8 @@ void SRF_RefS::solveSystemSmoothTruncQuad3Scans()
 
     //Covariance calculation
     cov_odo = (1.f/float(num_valid_range-3))*AtA.inverse()*res.squaredNorm();
+    //ROS_INFO_STREAM("COV_ODO:\n" << cov_odo);
+
 }
 
 void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
@@ -759,11 +761,11 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly13()
         {
             if (null_13(u) == 0)
             {
-                const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
+                //const float res_weight = std::sqrt(1.f/(1.f + ((k*res(cont))*(k*res(cont)))));
 
-                //float res_weight;
-                //if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
-                //else                        res_weight = 0.f;
+                float res_weight;
+                if (abs(res(cont)) <= c)    res_weight = 1.f - square(res(cont)*inv_c);
+                else                        res_weight = 0.f;
 
                 //Fill the matrix Aw
                 Aw(cont,0) = res_weight*A(cont,0);
@@ -841,7 +843,7 @@ void SRF_RefS::solveSystemSmoothTruncQuadOnly12()
     AtB = A.transpose()*B;
     kai_loc_level = AtA.ldlt().solve(AtB);
     Eigen::MatrixXf res(num_valid_range,1);
-     = A*kai_loc_level - B;
+    res = A*kai_loc_level - B;
     //cout << endl << "max res: " << res.maxCoeff();
     //cout << endl << "min res: " << res.minCoeff();
 
@@ -1196,10 +1198,12 @@ void SRF_RefS::odometryCalculation()
                 else
                 {
                     if  (new_ref_scan == true){
+                        
                         solveSystemSmoothTruncQuadOnly13();
                     }
 
                     else{
+                        
                         solveSystemSmoothTruncQuad3Scans();
                     }
                 }
@@ -1208,11 +1212,11 @@ void SRF_RefS::odometryCalculation()
             //6. Filter solution
             if (!filterLevelSolution()){return;}
 
-            //if (kai_loc_level.norm() < 0.05f)
-            //{
-            //    printf("\n Number of non-linear iterations: %d", k+1);
-            //    break;
-            //}
+            if (kai_loc_level.norm() < 0.05f)
+            {
+                printf("\n Number of non-linear iterations: %d", k+1);
+                break;
+            }
 
         }
     }
@@ -1236,9 +1240,11 @@ bool SRF_RefS::filterLevelSolution()
     //		Calculate Eigenvalues and Eigenvectors
     //----------------------------------------------------------
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXf> eigensolver(cov_odo);
+    ROS_INFO_STREAM("COV_ODO:\n" << cov_odo);
+
     if (eigensolver.info() != Eigen::Success)
     {
-        printf("\n Eigensolver couldn't find a solution. Pose is not updated");
+        printf("\n Eigensolver couldn't find a solution. Pose is not updated\n");
         return false;
     }
 	
@@ -1247,6 +1253,7 @@ bool SRF_RefS::filterLevelSolution()
     Eigen::Matrix<float,3,3> Bii = eigensolver.eigenvectors();
     Eigen::Matrix<float,3,1> kai_b = Bii.colPivHouseholderQr().solve(kai_loc_level);
 
+    assert((kai_loc_level).isApprox(Bii*kai_b, 1e-5) && "Ax=b has no solution." && __LINE__);
 
     //Second, we have to describe both the old linear and angular speeds in the "eigenvector" basis too
     //-------------------------------------------------------------------------------------------------
@@ -1267,6 +1274,9 @@ bool SRF_RefS::filterLevelSolution()
 
     Eigen::Matrix<float,3,1> kai_b_old = Bii.colPivHouseholderQr().solve(kai_loc_sub);
 
+    assert((kai_loc_sub).isApprox(Bii*kai_b_old, 1e-5) && "Ax=b has no solution." && __LINE__);
+
+
     //Filter speed
     //const float cf = 15e3f*expf(-int(level)), df = 0.05f*expf(-int(level));
     const float cf = 5e3f*expf(-int(level)), df = 0.02f*expf(-int(level));
@@ -1281,6 +1291,9 @@ bool SRF_RefS::filterLevelSolution()
 
     //Transform filtered speed to local reference frame and compute transformation
     Eigen::Matrix<float,3,1> kai_loc_fil = Bii.inverse().colPivHouseholderQr().solve(kai_b_fil);
+    
+    assert((kai_b_fil).isApprox(Bii.inverse()*kai_loc_fil, 1e-5) && "Ax=b has no solution." && __LINE__);
+
 
     //transformation
     const float incrx = kai_loc_fil(0);
@@ -1385,6 +1398,7 @@ void SRF_RefS::updateReferenceScan()
     else
         keyscan_out_region = -10.66*square(trans_2) + 11.81*trans_2*trans - 4.371*trans_2 + 0.5319*trans + 0.2042 - rot;
 
+    ROS_INFO("cols:%d ,keyscan_out_region:%f, trans:%f, trans_2:%f", cols, keyscan_out_region, trans, trans_2);
     if (keyscan_out_region < 0.f) //(trans + rot > threshold)
     {
         //ref_scan = old_scan

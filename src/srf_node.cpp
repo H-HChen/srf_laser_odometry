@@ -118,7 +118,6 @@ void CLaserOdometry2D::Init()
         srf_obj.initialize(scan_size, fov, 2);
     }
 
-    setLaserPoseFromTf();
 
     //Robot initial pose
     Pose3d robotInitialPose = Pose3d::Identity();
@@ -188,6 +187,7 @@ void CLaserOdometry2D::publishPoseFromSRF()
     setLaserPoseFromTf();
     //Compose Transformations
     robot_pose = srf_obj.laser_pose * LaserPoseOnTheRobot_inv;
+
     ROS_INFO("BASEodom = [%f %f %f]",
                 robot_pose.translation()(0),
                 robot_pose.translation()(1),
@@ -264,7 +264,9 @@ void CLaserOdometry2D::LaserCallBack(const sensor_msgs::LaserScan::ConstPtr& new
 
         //Initialize module on first scan
         if (first_laser_scan)
-        {
+        {   
+    setLaserPoseFromTf();
+
             Init();
             first_laser_scan = false;
             //Load first scan and build pyramid
